@@ -29,6 +29,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <gtk/gtk.h>
@@ -269,6 +270,61 @@ pw_setup (GtkBuilder *builder,
 }
 
 static void
+pkcs11_setup (GtkBuilder *builder,
+			  NMSettingVpn *s_vpn,
+			  const char *prefix,
+			  ChangedCallback changed_cb,
+			  gpointer user_data)
+{
+	GtkWidget *widget;
+	const char *value;
+	char namebuf[150];
+	char rp_buf[PATH_MAX];
+	char *rp_ptr;
+
+	/* Fill in providers */
+	nm_sprintf_buf (namebuf, "%s_providers_entry", prefix);
+	widget = GTK_WIDGET (gtk_builder_get_object (builder, namebuf));
+
+	if (s_vpn) {
+		value = nm_setting_vpn_get_data_item (s_vpn, NM_OPENVPN_KEY_PKCS11_PROVIDERS);
+		if (value && *value) {
+			/* A provider must be in a root-controlled directory */
+			rp_ptr = realpath (value, rp_buf);
+			if (rp_ptr && strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
+			                       strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) == 0)
+			    gtk_editable_set_text (GTK_EDITABLE (widget), rp_ptr);
+		}
+	}
+	g_signal_connect (G_OBJECT (widget), "changed", G_CALLBACK (changed_cb), user_data);
+
+	/* Fill in id */
+	nm_sprintf_buf (namebuf, "%s_id_entry", prefix);
+	widget = GTK_WIDGET (gtk_builder_get_object (builder, namebuf));
+
+	if (s_vpn) {
+		value = nm_setting_vpn_get_data_item (s_vpn, NM_OPENVPN_KEY_PKCS11_ID);
+		if (value && *value)
+			gtk_editable_set_text (GTK_EDITABLE (widget), value);
+	}
+	g_signal_connect (G_OBJECT (widget), "changed", G_CALLBACK (changed_cb), user_data);
+
+	/* Fill in the pin */
+	nm_sprintf_buf (namebuf, "%s_pin_entry", prefix);
+	widget = GTK_WIDGET (gtk_builder_get_object (builder, namebuf));
+	g_signal_connect (widget, "changed", G_CALLBACK (changed_cb), user_data);
+
+	if (s_vpn) {
+		value = nm_setting_vpn_get_secret (s_vpn, NM_OPENVPN_KEY_PKCS11_PIN);
+		if (value)
+			gtk_editable_set_text (GTK_EDITABLE (widget), value);
+	}
+
+	nma_utils_setup_password_storage (widget, 0, (NMSetting *) s_vpn, NM_OPENVPN_KEY_PKCS11_PIN,
+	                                  TRUE, FALSE);
+}
+
+static void
 tls_pw_init_auth_widget (GtkBuilder *builder,
                          NMSettingVpn *s_vpn,
                          const char *contype,
@@ -279,7 +335,7 @@ tls_pw_init_auth_widget (GtkBuilder *builder,
 	NMACertChooser *ca;
 	const char *value;
 	char namebuf[150];
-	gboolean tls = FALSE, pw = FALSE;
+	gboolean tls = FALSE, pw = FALSE, pkcs11 = FALSE;
 
 	g_return_if_fail (builder != NULL);
 	g_return_if_fail (changed_cb != NULL);
@@ -290,10 +346,17 @@ tls_pw_init_auth_widget (GtkBuilder *builder,
 	nma_cert_chooser_add_to_size_group (ca, GTK_SIZE_GROUP (gtk_builder_get_object (builder, "labels")));
 
 	/* Three major connection types here: TLS-only, PW-only, and TLS + PW */
-	if (!strcmp (contype, NM_OPENVPN_CONTYPE_TLS) || !strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS))
+	if (!strcmp (contype, NM_OPENVPN_CONTYPE_TLS)
+	    || !strcmp (contype, NM_OPENVPN_CONTYPE_TLS_PKCS11)
+	    || !strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS)
+	    || !strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11))
 		tls = TRUE;
-	if (!strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD) || !strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS))
+	if (!strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD)
+	    || !strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS)
+	    || !strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11))
 		pw = TRUE;
+	if (!strcmp (contype, NM_OPENVPN_CONTYPE_TLS_PKCS11) || !strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11))
+		pkcs11 = TRUE;
 
 	g_signal_connect (ca, "changed", G_CALLBACK (changed_cb), user_data);
 	if (s_vpn) {
@@ -307,6 +370,9 @@ tls_pw_init_auth_widget (GtkBuilder *builder,
 		tls_setup (builder, s_vpn, prefix, ca, changed_cb, user_data);
 	if (pw)
 		pw_setup (builder, s_vpn, prefix, changed_cb, user_data);
+	if (pkcs11)
+		pkcs11_setup (builder, s_vpn, prefix, changed_cb, user_data);
+
 }
 
 static void
@@ -479,6 +545,40 @@ validate_tls (GtkBuilder *builder, const char *prefix, GError **error)
 }
 
 static gboolean
+validate_pkcs11 (GtkBuilder *builder, const char *prefix, GError **error)
+{
+	GtkWidget *widget;
+	char namebuf[150];
+	const char *str;
+
+	/* We need a provider */
+	nm_sprintf_buf (namebuf, "%s_providers_entry", prefix);
+	widget = GTK_WIDGET (gtk_builder_get_object (builder, namebuf));
+	str = gtk_editable_get_text (GTK_EDITABLE (widget));
+	if (!str || !*str) {
+		g_set_error (error,
+					 NMV_EDITOR_PLUGIN_ERROR,
+					 NMV_EDITOR_PLUGIN_ERROR_INVALID_PROPERTY,
+					 NM_OPENVPN_KEY_PKCS11_PROVIDERS);
+		return FALSE;
+	}
+
+	/* We need an id */
+	nm_sprintf_buf (namebuf, "%s_id_entry", prefix);
+	widget = GTK_WIDGET (gtk_builder_get_object (builder, namebuf));
+	str = gtk_editable_get_text (GTK_EDITABLE (widget));
+	if (!str || !*str) {
+		g_set_error (error,
+					 NMV_EDITOR_PLUGIN_ERROR,
+					 NMV_EDITOR_PLUGIN_ERROR_INVALID_PROPERTY,
+					 NM_OPENVPN_KEY_PKCS11_ID);
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+static gboolean
 auth_widget_check_validity (GtkBuilder *builder, const char *contype, GError **error)
 {
 	GtkWidget *widget;
@@ -491,6 +591,12 @@ auth_widget_check_validity (GtkBuilder *builder, const char *contype, GError **e
 			return FALSE;
 	} else if (!strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS)) {
 		if (!validate_tls (builder, "pw_tls", error))
+			return FALSE;
+	} else if (!strcmp (contype, NM_OPENVPN_CONTYPE_TLS_PKCS11)) {
+		if (!validate_tls (builder, "tls_pkcs11", error) || !validate_pkcs11 (builder, "tls_pkcs11", error))
+			return FALSE;
+	} else if (!strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11)) {
+		if (!validate_tls (builder, "tls_pkcs11", error) || !validate_pkcs11 (builder, "pw_tls_pkcs11", error))
 			return FALSE;
 	} else if (!strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD)) {
 		if (!validate_cert_chooser (builder, "pw_ca_cert", &local)) {
@@ -628,6 +734,46 @@ update_pw (GtkBuilder *builder, const char *prefix, NMSettingVpn *s_vpn)
 	nm_setting_set_secret_flags (NM_SETTING (s_vpn), NM_OPENVPN_KEY_PASSWORD, pw_flags, NULL);
 }
 
+static void
+update_pkcs11 (GtkBuilder *builder, const char *prefix, NMSettingVpn *s_vpn)
+{
+	GtkWidget *widget;
+	NMSettingSecretFlags pw_flags;
+	char namebuf[150];
+	const char *str;
+	char rp_buf[PATH_MAX];
+	char *rp_ptr;
+
+	g_return_if_fail (builder != NULL);
+	g_return_if_fail (prefix != NULL);
+	g_return_if_fail (s_vpn != NULL);
+
+	nm_sprintf_buf (namebuf, "%s_providers_entry", prefix);
+	widget = GTK_WIDGET (gtk_builder_get_object (builder, namebuf));
+	str = gtk_editable_get_text (GTK_EDITABLE (widget));
+	if (str && *str) {
+		rp_ptr = realpath (str, rp_buf);
+		if (rp_ptr && strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
+		                       strlen (NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) == 0)
+			nm_setting_vpn_add_data_item (s_vpn, NM_OPENVPN_KEY_PKCS11_PROVIDERS, rp_ptr);
+	}
+
+	nm_sprintf_buf (namebuf, "%s_id_entry", prefix);
+	widget = (GtkWidget *) gtk_builder_get_object (builder, namebuf);
+	str = gtk_editable_get_text (GTK_EDITABLE (widget));
+	if (str && *str)
+		nm_setting_vpn_add_data_item (s_vpn, NM_OPENVPN_KEY_PKCS11_ID, str);
+
+	nm_sprintf_buf (namebuf, "%s_pin_entry", prefix);
+	widget = (GtkWidget *) gtk_builder_get_object (builder, namebuf);
+	str = gtk_editable_get_text (GTK_EDITABLE (widget));
+	if (str && *str)
+		nm_setting_vpn_add_secret (s_vpn, NM_OPENVPN_KEY_PKCS11_PIN, str);
+	pw_flags = nma_utils_menu_to_secret_flags (widget);
+	nm_setting_set_secret_flags (NM_SETTING (s_vpn), NM_OPENVPN_KEY_PKCS11_PIN, pw_flags, NULL);
+}
+
+
 static gboolean
 auth_widget_update_connection (GtkBuilder *builder,
                                const char *contype,
@@ -642,6 +788,10 @@ auth_widget_update_connection (GtkBuilder *builder,
 
 	if (!strcmp (contype, NM_OPENVPN_CONTYPE_TLS)) {
 		update_tls (builder, "tls", s_vpn);
+	} else if (!strcmp (contype, NM_OPENVPN_CONTYPE_TLS_PKCS11)) {
+		update_tls (builder, "tls_pkcs11", s_vpn);
+		update_pkcs11 (builder, "tls_pkcs11", s_vpn);
+
 	} else if (!strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD)) {
 		update_from_cert_chooser (builder, NM_OPENVPN_KEY_CA, NULL, NULL,
 		                          "pw", "ca_cert", s_vpn);
@@ -649,6 +799,10 @@ auth_widget_update_connection (GtkBuilder *builder,
 	} else if (!strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS)) {
 		update_tls (builder, "pw_tls", s_vpn);
 		update_pw (builder, "pw_tls", s_vpn);
+	} else if (!strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11)) {
+		update_tls (builder, "pw_tls_pkcs11", s_vpn);
+		update_pw (builder, "pw_tls_pkcs11", s_vpn);
+		update_pkcs11 (builder, "pw_tls_pkcs11", s_vpn);
 	} else if (!strcmp (contype, NM_OPENVPN_CONTYPE_STATIC_KEY)) {
 		/* Update static key */
 		widget = GTK_WIDGET (gtk_builder_get_object (builder, "sk_key_chooser"));
@@ -1812,7 +1966,9 @@ advanced_dialog_new (GHashTable *hash, const char *contype)
 	                          "clicked", G_CALLBACK (gtk_widget_show), chooser);
 	if (NM_IN_STRSET (contype,
 	                  NM_OPENVPN_CONTYPE_TLS,
+	                  NM_OPENVPN_CONTYPE_TLS_PKCS11,
 	                  NM_OPENVPN_CONTYPE_PASSWORD_TLS,
+	                  NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11,
 	                  NM_OPENVPN_CONTYPE_PASSWORD)) {
 		/* Initialize direction combo */
 		combo = GTK_WIDGET (gtk_builder_get_object (builder, "direction_combo"));
@@ -1864,7 +2020,9 @@ advanced_dialog_new (GHashTable *hash, const char *contype)
 	                          "clicked", G_CALLBACK (gtk_widget_show), chooser);
 	if (NM_IN_STRSET (contype,
 	                  NM_OPENVPN_CONTYPE_TLS,
+	                  NM_OPENVPN_CONTYPE_TLS_PKCS11,
 	                  NM_OPENVPN_CONTYPE_PASSWORD_TLS,
+	                  NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11,
 	                  NM_OPENVPN_CONTYPE_PASSWORD)) {
 		value = g_hash_table_lookup (hash, NM_OPENVPN_KEY_EXTRA_CERTS);
 		if (value && value[0]) {
@@ -2253,7 +2411,9 @@ advanced_dialog_new_hash_from_dialog (GtkWidget *dialog)
 
 	contype = g_object_get_data (G_OBJECT (dialog), "connection-type");
 	if (   !strcmp (contype, NM_OPENVPN_CONTYPE_TLS)
+	    || !strcmp (contype, NM_OPENVPN_CONTYPE_TLS_PKCS11)
 	    || !strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS)
+	    || !strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11)
 	    || !strcmp (contype, NM_OPENVPN_CONTYPE_PASSWORD)) {
 		char *filename;
 		GFile *file;
@@ -2708,9 +2868,11 @@ init_editor_plugin (OpenvpnEditor *self, NMConnection *connection)
 	if (s_vpn) {
 		contype = nm_setting_vpn_get_data_item (s_vpn, NM_OPENVPN_KEY_CONNECTION_TYPE);
 		if (!NM_IN_STRSET (contype, NM_OPENVPN_CONTYPE_TLS,
+		                            NM_OPENVPN_CONTYPE_TLS_PKCS11,
 		                            NM_OPENVPN_CONTYPE_STATIC_KEY,
 		                            NM_OPENVPN_CONTYPE_PASSWORD,
-		                            NM_OPENVPN_CONTYPE_PASSWORD_TLS))
+		                            NM_OPENVPN_CONTYPE_PASSWORD_TLS,
+		                            NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11))
 			contype = NM_OPENVPN_CONTYPE_TLS;
 	}
 
@@ -2725,6 +2887,20 @@ init_editor_plugin (OpenvpnEditor *self, NMConnection *connection)
 	                    COL_AUTH_TYPE, NM_OPENVPN_CONTYPE_TLS,
 	                    -1);
 
+	/* TLS auth widget (PKCS11-mode) */
+	tls_pw_init_auth_widget (priv->builder, s_vpn,
+	                         NM_OPENVPN_CONTYPE_TLS_PKCS11, "tls_pkcs11",
+	                         stuff_changed_cb, self);
+	gtk_list_store_append (store, &iter);
+	gtk_list_store_set (store, &iter,
+	                    COL_AUTH_NAME, _("Certificates (TLS), PKCS#11"),
+	                    COL_AUTH_PAGE, 1,
+	                    COL_AUTH_TYPE, NM_OPENVPN_CONTYPE_TLS_PKCS11,
+	                    -1);
+	if (   active < 0 
+	    && nm_streq (contype, NM_OPENVPN_CONTYPE_TLS_PKCS11))
+		active = 1;
+
 	/* Password auth widget */
 	tls_pw_init_auth_widget (priv->builder, s_vpn,
 	                         NM_OPENVPN_CONTYPE_PASSWORD, "pw",
@@ -2732,12 +2908,12 @@ init_editor_plugin (OpenvpnEditor *self, NMConnection *connection)
 	gtk_list_store_append (store, &iter);
 	gtk_list_store_set (store, &iter,
 	                    COL_AUTH_NAME, _("Password"),
-	                    COL_AUTH_PAGE, 1,
+	                    COL_AUTH_PAGE, 2,
 	                    COL_AUTH_TYPE, NM_OPENVPN_CONTYPE_PASSWORD,
 	                    -1);
 	if (   active < 0
 	    && nm_streq (contype, NM_OPENVPN_CONTYPE_PASSWORD))
-		active = 1;
+		active = 2;
 
 	/* Password+TLS auth widget */
 	tls_pw_init_auth_widget (priv->builder, s_vpn,
@@ -2746,12 +2922,27 @@ init_editor_plugin (OpenvpnEditor *self, NMConnection *connection)
 	gtk_list_store_append (store, &iter);
 	gtk_list_store_set (store, &iter,
 	                    COL_AUTH_NAME, _("Password with Certificates (TLS)"),
-	                    COL_AUTH_PAGE, 2,
+	                    COL_AUTH_PAGE, 3,
 	                    COL_AUTH_TYPE, NM_OPENVPN_CONTYPE_PASSWORD_TLS,
 	                    -1);
 	if (   active < 0
 	    && nm_streq (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS))
-		active = 2;
+		active = 3;
+
+	/* Password+TLS auth widget (PKCS11-mode) */
+	tls_pw_init_auth_widget (priv->builder, s_vpn,
+	                         NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11, "pw_tls_pkcs11",
+	                         stuff_changed_cb, self);
+	gtk_list_store_append (store, &iter);
+	gtk_list_store_set (store, &iter,
+	                    COL_AUTH_NAME, _("Password with Certificates (TLS), PKCS#11"),
+	                    COL_AUTH_PAGE, 4,
+	                    COL_AUTH_TYPE, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11,
+	                    -1);
+	if (   active < 0
+	    && nm_streq (contype, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11))
+		active = 4;
+
 
 	/* Static key auth widget */
 	sk_init_auth_widget (priv->builder, s_vpn, stuff_changed_cb, self);
@@ -2759,12 +2950,12 @@ init_editor_plugin (OpenvpnEditor *self, NMConnection *connection)
 	gtk_list_store_append (store, &iter);
 	gtk_list_store_set (store, &iter,
 	                    COL_AUTH_NAME, _("Static Key"),
-	                    COL_AUTH_PAGE, 3,
+	                    COL_AUTH_PAGE, 5,
 	                    COL_AUTH_TYPE, NM_OPENVPN_CONTYPE_STATIC_KEY,
 	                    -1);
 	if (   active < 0
 	    && nm_streq (contype, NM_OPENVPN_CONTYPE_STATIC_KEY))
-		active = 3;
+		active = 5;
 
 	gtk_combo_box_set_model (GTK_COMBO_BOX (widget), GTK_TREE_MODEL (store));
 	g_object_unref (store);

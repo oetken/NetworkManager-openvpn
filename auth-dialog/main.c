@@ -93,6 +93,9 @@ typedef gboolean (*AskUserFunc) (const char *vpn_name,
                                  gboolean need_password,
                                  const char *existing_password,
                                  char **out_new_password,
+                                 gboolean need_pin,
+                                 const char *existing_pin,
+                                 char **out_new_pin,
                                  gboolean need_certpass,
                                  const char *existing_certpass,
                                  char **out_new_certpass,
@@ -105,6 +108,8 @@ typedef void (*FinishFunc) (const char *vpn_name,
                             gboolean allow_interaction,
                             gboolean need_password,
                             const char *password,
+                            gboolean need_pin,
+                            const char *pin,
                             gboolean need_certpass,
                             const char *certpass,
                             gboolean need_proxypass,
@@ -159,6 +164,8 @@ eui_finish (const char *vpn_name,
             gboolean allow_interaction,
             gboolean need_password,
             const char *existing_password,
+            gboolean need_pin,
+            const char *existing_pin,
             gboolean need_certpass,
             const char *existing_certpass,
             gboolean need_proxypass,
@@ -182,6 +189,13 @@ eui_finish (const char *vpn_name,
 	                        _("Password"),
 	                        TRUE,
 	                        need_password && allow_interaction);
+
+	keyfile_add_entry_info (keyfile,
+	                        NM_OPENVPN_KEY_PKCS11_PIN,
+	                        existing_pin ? existing_pin : "",
+	                        _("PIN"),
+	                        TRUE,
+	                        need_pin && allow_interaction);
 
 	keyfile_add_entry_info (keyfile,
 	                        NM_OPENVPN_KEY_CERTPASS,
@@ -215,6 +229,9 @@ std_ask_user (const char *vpn_name,
               gboolean need_password,
               const char *existing_password,
               char **out_new_password,
+              gboolean need_pin,
+              const char *existing_pin,
+              char **out_new_pin,
               gboolean need_certpass,
               const char *existing_certpass,
               char **out_new_certpass,
@@ -228,6 +245,7 @@ std_ask_user (const char *vpn_name,
 	g_return_val_if_fail (vpn_name != NULL, FALSE);
 	g_return_val_if_fail (prompt != NULL, FALSE);
 	g_return_val_if_fail (out_new_password != NULL, FALSE);
+	g_return_val_if_fail (out_new_pin != NULL, FALSE);
 	g_return_val_if_fail (out_new_certpass != NULL, FALSE);
 	g_return_val_if_fail (out_new_proxypass != NULL, FALSE);
 
@@ -240,10 +258,13 @@ std_ask_user (const char *vpn_name,
 	if (need_password)
 		nma_vpn_password_dialog_set_password (dialog, existing_password);
 
-	nma_vpn_password_dialog_set_show_password_secondary (dialog, need_certpass);
+	nma_vpn_password_dialog_set_show_password_secondary (dialog, need_certpass || need_pin);
 	if (need_certpass) {
 		nma_vpn_password_dialog_set_password_secondary_label (dialog, _("Certificate pass_word:") );
 		nma_vpn_password_dialog_set_password_secondary (dialog, existing_certpass);
+	} else if (need_pin) {
+		nma_vpn_password_dialog_set_password_secondary_label (dialog, _("PKCS#11 PIN:") );
+		nma_vpn_password_dialog_set_password_secondary (dialog, existing_pin);
 	}
 
 	nma_vpn_password_dialog_set_show_password_ternary (dialog, need_proxypass);
@@ -256,6 +277,8 @@ std_ask_user (const char *vpn_name,
 	if (nma_vpn_password_dialog_run_and_block (dialog)) {
 		if (need_password)
 			*out_new_password = g_strdup (nma_vpn_password_dialog_get_password (dialog));
+		if (need_pin)
+			*out_new_pin = g_strdup (nma_vpn_password_dialog_get_password_secondary (dialog));
 		if (need_certpass)
 			*out_new_certpass = g_strdup (nma_vpn_password_dialog_get_password_secondary (dialog));
 		if (need_proxypass)
@@ -299,6 +322,8 @@ std_finish (const char *vpn_name,
             gboolean allow_interaction,
             gboolean need_password,
             const char *password,
+            gboolean need_pin,
+            const char *pin,
             gboolean need_certpass,
             const char *certpass,
             gboolean need_proxypass,
@@ -307,6 +332,8 @@ std_finish (const char *vpn_name,
 	/* Send the passwords back to our parent */
 	if (password)
 		printf ("%s\n%s\n", NM_OPENVPN_KEY_PASSWORD, password);
+	if (pin)
+		printf("%s\n%s\n", NM_OPENVPN_KEY_PKCS11_PIN, pin);
 	if (certpass)
 		printf ("%s\n%s\n", NM_OPENVPN_KEY_CERTPASS, certpass);
 	if (proxypass)
@@ -327,9 +354,11 @@ get_existing_passwords (GHashTable *vpn_data,
                         GHashTable *existing_secrets,
                         const char *vpn_uuid,
                         gboolean need_password,
+                        gboolean need_pin,
                         gboolean need_certpass,
                         gboolean need_proxypass,
                         char **out_password,
+                        char **out_pin,
                         char **out_certpass,
                         char **out_proxypass)
 {
@@ -338,6 +367,7 @@ get_existing_passwords (GHashTable *vpn_data,
 	NMSettingSecretFlags proxy_flags = NM_SETTING_SECRET_FLAG_NONE;
 
 	g_return_if_fail (out_password != NULL);
+	g_return_if_fail (out_pin != NULL);
 	g_return_if_fail (out_certpass != NULL);
 	g_return_if_fail (out_proxypass != NULL);
 
@@ -347,6 +377,15 @@ get_existing_passwords (GHashTable *vpn_data,
 			*out_password = g_strdup (g_hash_table_lookup (existing_secrets, NM_OPENVPN_KEY_PASSWORD));
 			if (!*out_password)
 				*out_password = keyring_lookup_secret (vpn_uuid, NM_OPENVPN_KEY_PASSWORD);
+		}
+	}
+
+	nm_vpn_service_plugin_get_secret_flags (vpn_data, NM_OPENVPN_KEY_PKCS11_PIN, &pw_flags);
+	if (need_pin) {
+		if (!(pw_flags & NM_SETTING_SECRET_FLAG_NOT_SAVED)) {
+			*out_pin = g_strdup (g_hash_table_lookup (existing_secrets, NM_OPENVPN_KEY_PKCS11_PIN));
+			if (!*out_pin)
+				*out_pin = keyring_lookup_secret (vpn_uuid, NM_OPENVPN_KEY_PKCS11_PIN);
 		}
 	}
 
@@ -375,6 +414,7 @@ static char *
 get_passwords_required (GHashTable *data,
                         const char *const*hints,
                         gboolean *out_need_password,
+                        gboolean *out_need_pin,
                         gboolean *out_need_certpass,
                         gboolean *out_need_proxypass)
 {
@@ -384,6 +424,7 @@ get_passwords_required (GHashTable *data,
 	const char *const*iter;
 
 	*out_need_password = FALSE;
+	*out_need_pin = FALSE;
 	*out_need_certpass = FALSE;
 	*out_need_proxypass = FALSE;
 
@@ -405,11 +446,17 @@ get_passwords_required (GHashTable *data,
 	ctype = g_hash_table_lookup (data, NM_OPENVPN_KEY_CONNECTION_TYPE);
 	g_return_val_if_fail (ctype != NULL, NULL);
 
-	if (!strcmp (ctype, NM_OPENVPN_CONTYPE_TLS) || !strcmp (ctype, NM_OPENVPN_CONTYPE_PASSWORD_TLS)) {
+	if (!strcmp (ctype, NM_OPENVPN_CONTYPE_TLS)
+	    || !strcmp (ctype, NM_OPENVPN_CONTYPE_TLS_PKCS11)
+	    || !strcmp (ctype, NM_OPENVPN_CONTYPE_PASSWORD_TLS)
+	    || !strcmp (ctype, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11)) {
+		/* PKCS11 PIN */
+		if (   !strcmp(ctype, NM_OPENVPN_CONTYPE_TLS_PKCS11) || !strcmp (ctype, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11))
+			*out_need_pin = TRUE;
 		/* Normal user password */
 		flags = NM_SETTING_SECRET_FLAG_NONE;
 		nm_vpn_service_plugin_get_secret_flags (data, NM_OPENVPN_KEY_PASSWORD, &flags);
-		if (   !strcmp (ctype, NM_OPENVPN_CONTYPE_PASSWORD_TLS)
+		if (   (!strcmp (ctype, NM_OPENVPN_CONTYPE_PASSWORD_TLS) || !strcmp (ctype, NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11))
 		    && !(flags & NM_SETTING_SECRET_FLAG_NOT_REQUIRED))
 			*out_need_password = TRUE;
 
@@ -445,14 +492,17 @@ main (int argc, char *argv[])
 	gs_unref_hashtable GHashTable *data = NULL;
 	gs_unref_hashtable GHashTable *secrets = NULL;
 	gboolean need_password = FALSE;
+	gboolean need_pin = FALSE;
 	gboolean need_certpass = FALSE;
 	gboolean need_proxypass = FALSE;
 	gs_strfreev char **hints = NULL;
 	gs_free char *prompt = NULL;
 	nm_auto_free_secret char *new_password = NULL;
+	nm_auto_free_secret char *new_pin = NULL;
 	nm_auto_free_secret char *new_certpass = NULL;
 	nm_auto_free_secret char *new_proxypass = NULL;
 	nm_auto_free_secret char *existing_password = NULL;
+	nm_auto_free_secret char *existing_pin = NULL;
 	nm_auto_free_secret char *existing_certpass = NULL;
 	nm_auto_free_secret char *existing_proxypass = NULL;
 	gboolean external_ui_mode = FALSE;
@@ -512,12 +562,12 @@ main (int argc, char *argv[])
 	/* Determine which passwords are actually required, either from hints or
 	 * from looking at the VPN configuration.
 	 */
-	prompt = get_passwords_required (data, (const char *const*) hints, &need_password, &need_certpass, &need_proxypass);
+	prompt = get_passwords_required (data, (const char *const*) hints, &need_password, &need_pin, &need_certpass, &need_proxypass);
 	if (!prompt)
 		prompt = g_strdup_printf (_("You need to authenticate to access the Virtual Private Network “%s”."), vpn_name);
 
 	/* Exit early if we don't need any passwords */
-	if (!need_password && !need_certpass && !need_proxypass) {
+	if (!need_password && !need_pin && !need_certpass && !need_proxypass) {
 		no_secrets_required_func ();
 		return EXIT_SUCCESS;
 	}
@@ -526,12 +576,16 @@ main (int argc, char *argv[])
 	                        secrets,
 	                        vpn_uuid,
 	                        need_password,
+	                        need_pin,
 	                        need_certpass,
 	                        need_proxypass,
 	                        &existing_password,
+	                        &existing_pin,
 	                        &existing_certpass,
 	                        &existing_proxypass);
 	if (need_password && !existing_password)
+		ask_user = TRUE;
+	else if (need_pin && !existing_pin)
 		ask_user = TRUE;
 	else if (need_certpass && !existing_certpass)
 		ask_user = TRUE;
@@ -551,6 +605,9 @@ main (int argc, char *argv[])
 		                    need_password,
 		                    existing_password,
 		                    &new_password,
+		                    need_pin,
+		                    existing_pin,
+		                    &new_pin,
 		                    need_certpass,
 		                    existing_certpass,
 		                    &new_certpass,
@@ -565,6 +622,8 @@ main (int argc, char *argv[])
 	             allow_interaction,
 	             need_password,
 	             new_password ? new_password : existing_password,
+	             need_pin,
+	             new_pin ? new_pin : existing_pin,
 	             need_certpass,
 	             new_certpass ? new_certpass : existing_certpass,
 	             need_proxypass,

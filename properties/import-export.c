@@ -792,10 +792,12 @@ do_import (const char *path, const char *contents, gsize contents_len, GError **
 	char *tmp, *tmp2;
 	const char *ta_direction = NULL, *secret_direction = NULL;
 	gboolean allow_ta_direction = FALSE, allow_secret_direction = FALSE;
-	gboolean have_cert = FALSE, have_key = FALSE, have_ca = FALSE, have_pkcs12 = FALSE;
+	gboolean have_cert = FALSE, have_key = FALSE, have_ca = FALSE, have_pkcs11 = FALSE, have_pkcs12 = FALSE;
 	const char *cert_path = NULL, *key_path = NULL, *ca_path = NULL;
 	GSList *inline_blobs = NULL;
 	GSList *sl_iter;
+	char rp_buf[PATH_MAX];
+	char *rp_ptr;
 
 	g_return_val_if_fail (!error || !*error, NULL);
 
@@ -1524,6 +1526,30 @@ do_import (const char *path, const char *contents, gsize contents_len, GError **
 			nm_ip_route_unref (route);
 		}
 
+		if (NM_IN_STRSET (params[0], NMV_OVPN_TAG_PKCS11_ID)) {
+			if (!args_params_check_nargs_n (params, 1, &line_error))
+				goto handle_line_error;
+			if (!args_params_check_arg_nonempty (params, 1, NULL, &line_error))
+				goto handle_line_error;
+			setting_vpn_add_data_item (s_vpn, NM_OPENVPN_KEY_PKCS11_ID, params[1]);
+			continue;
+
+		}
+
+		if (NM_IN_STRSET (params[0], NMV_OVPN_TAG_PKCS11_PROVIDERS)) {
+			if (!args_params_check_nargs_n (params, 1, &line_error))
+				goto handle_line_error;
+			if (!args_params_check_arg_nonempty (params, 1, NULL, &line_error))
+				goto handle_line_error;
+			rp_ptr = realpath (params[1], rp_buf);
+			if (!rp_ptr || strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
+			                        strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) != 0)
+				continue;
+			setting_vpn_add_data_item (s_vpn, NM_OPENVPN_KEY_PKCS11_PROVIDERS, rp_ptr);
+			continue;
+		}
+
+
 		if (params[0][0] == '<' && params[0][strlen (params[0]) - 1] == '>') {
 			gs_free char *token = g_strndup (&params[0][1], strlen (params[0]) - 2);
 			gs_free char *end_token = NULL;
@@ -1740,10 +1766,14 @@ handle_line_error:
 	if (have_pass) {
 		if (have_cert || have_pkcs12)
 			ctype = NM_OPENVPN_CONTYPE_PASSWORD_TLS;
+		else if (have_cert && have_pkcs11)
+			ctype = NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11;
 		else if (have_ca)
 			ctype = NM_OPENVPN_CONTYPE_PASSWORD;
 	} else if (have_cert || have_pkcs12) {
 		ctype = NM_OPENVPN_CONTYPE_TLS;
+	} else if (have_cert && have_pkcs11) {
+		ctype = NM_OPENVPN_CONTYPE_TLS_PKCS11;
 	} else if (have_sk)
 		ctype = NM_OPENVPN_CONTYPE_STATIC_KEY;
 

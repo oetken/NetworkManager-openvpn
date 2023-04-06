@@ -59,6 +59,8 @@
 #define NM_OPENVPN_KEY_PING                      "ping"
 #define NM_OPENVPN_KEY_PING_EXIT                 "ping-exit"
 #define NM_OPENVPN_KEY_PING_RESTART              "ping-restart"
+#define NM_OPENVPN_KEY_PKCS11_ID                 "pkcs11-id"
+#define NM_OPENVPN_KEY_PKCS11_PROVIDERS          "pkcs11-providers"
 #define NM_OPENVPN_KEY_PORT                      "port"
 #define NM_OPENVPN_KEY_PROTO_TCP                 "proto-tcp"
 #define NM_OPENVPN_KEY_PROXY_PORT                "proxy-port"
@@ -91,10 +93,12 @@
 
 #define NM_OPENVPN_KEY_PASSWORD                  "password"
 #define NM_OPENVPN_KEY_CERTPASS                  "cert-pass"
+#define NM_OPENVPN_KEY_PKCS11_PIN                "pkcs11-pin"
 #define NM_OPENVPN_KEY_HTTP_PROXY_PASSWORD       "http-proxy-password"
 
 #define NM_OPENVPN_KEY_PASSWORD_FLAGS            "password-flags"
 #define NM_OPENVPN_KEY_CERTPASS_FLAGS            "cert-pass-flags"
+#define NM_OPENVPN_KEY_PKCS11_PIN_FLAGS          "pkcs11-pin-flags"
 #define NM_OPENVPN_KEY_HTTP_PROXY_PASSWORD_FLAGS "http-proxy-password-flags"
 
 
@@ -114,10 +118,12 @@
 #define NM_OPENVPN_AUTH_SHA384    "SHA384"
 #define NM_OPENVPN_AUTH_SHA512    "SHA512"
 
-#define NM_OPENVPN_CONTYPE_PASSWORD     "password"
-#define NM_OPENVPN_CONTYPE_PASSWORD_TLS "password-tls"
-#define NM_OPENVPN_CONTYPE_STATIC_KEY   "static-key"
-#define NM_OPENVPN_CONTYPE_TLS          "tls"
+#define NM_OPENVPN_CONTYPE_PASSWORD            "password"
+#define NM_OPENVPN_CONTYPE_PASSWORD_TLS        "password-tls"
+#define NM_OPENVPN_CONTYPE_PASSWORD_TLS_PKCS11 "password-tls-pkcs11"
+#define NM_OPENVPN_CONTYPE_STATIC_KEY          "static-key"
+#define NM_OPENVPN_CONTYPE_TLS                 "tls"
+#define NM_OPENVPN_CONTYPE_TLS_PKCS11          "tls-pkcs11"
 
 /* arguments of "--remote-cert-tls" */
 #define NM_OPENVPN_REM_CERT_TLS_CLIENT "client"
@@ -136,5 +142,8 @@
 #define NM_OPENVPN_USER   "nm-openvpn"
 #define NM_OPENVPN_GROUP  "nm-openvpn"
 #define NM_OPENVPN_CHROOT LOCALSTATEDIR "/lib/openvpn/chroot"
+
+/* Root controlled path for pkcs11 provider file */
+#define NM_OPENVPN_PKCS11_PROVIDERS_PREFIX "/usr/lib/"
 
 #endif /* __NM_SERVICE_DEFINES_H__ */
