@@ -292,9 +292,9 @@ pkcs11_setup (GtkBuilder *builder,
 			/* A provider must be in a root-controlled directory */
 			rp_ptr = realpath (value, rp_buf);
 			if (rp_ptr &&
-			    strlen(rp_ptr) != 0 &&
-			    strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
-			             strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) == 0)
+			    (strlen(rp_ptr) == 0 ||
+			     strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
+			              strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) == 0))
 			    gtk_editable_set_text (GTK_EDITABLE (widget), rp_ptr);
 		}
 	}
@@ -557,7 +557,7 @@ validate_pkcs11 (GtkBuilder *builder, const char *prefix, GError **error)
 	nm_sprintf_buf (namebuf, "%s_providers_entry", prefix);
 	widget = GTK_WIDGET (gtk_builder_get_object (builder, namebuf));
 	str = gtk_editable_get_text (GTK_EDITABLE (widget));
-	if (!str || !*str) {
+	if (!str) {
 		g_set_error (error,
 					 NMV_EDITOR_PLUGIN_ERROR,
 					 NMV_EDITOR_PLUGIN_ERROR_INVALID_PROPERTY,
@@ -753,12 +753,12 @@ update_pkcs11 (GtkBuilder *builder, const char *prefix, NMSettingVpn *s_vpn)
 	nm_sprintf_buf (namebuf, "%s_providers_entry", prefix);
 	widget = GTK_WIDGET (gtk_builder_get_object (builder, namebuf));
 	str = gtk_editable_get_text (GTK_EDITABLE (widget));
-	if (str && *str) {
+	if (str) {
 		rp_ptr = realpath (str, rp_buf);
 		if (rp_ptr &&
-		    strlen(rp_ptr) != 0 &&
-		    strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
-		             strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) == 0)
+		    (strlen(rp_ptr) == 0 ||
+		     strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
+		              strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) == 0))
 			nm_setting_vpn_add_data_item (s_vpn, NM_OPENVPN_KEY_PKCS11_PROVIDERS, rp_ptr);
 	}
 
