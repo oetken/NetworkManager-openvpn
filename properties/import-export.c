@@ -1542,8 +1542,10 @@ do_import (const char *path, const char *contents, gsize contents_len, GError **
 			if (!args_params_check_arg_nonempty (params, 1, NULL, &line_error))
 				goto handle_line_error;
 			rp_ptr = realpath (params[1], rp_buf);
-			if (!rp_ptr || strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
-			                        strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) != 0)
+			if (!rp_ptr ||
+			    (strlen(rp_ptr) != 0 &&
+			     strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
+			              strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) != 0))
 				continue;
 			setting_vpn_add_data_item (s_vpn, NM_OPENVPN_KEY_PKCS11_PROVIDERS, rp_ptr);
 			continue;

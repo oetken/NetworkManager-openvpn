@@ -291,8 +291,10 @@ pkcs11_setup (GtkBuilder *builder,
 		if (value && *value) {
 			/* A provider must be in a root-controlled directory */
 			rp_ptr = realpath (value, rp_buf);
-			if (rp_ptr && strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
-			                       strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) == 0)
+			if (rp_ptr &&
+			    strlen(rp_ptr) != 0 &&
+			    strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
+			             strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) == 0)
 			    gtk_editable_set_text (GTK_EDITABLE (widget), rp_ptr);
 		}
 	}
@@ -753,8 +755,10 @@ update_pkcs11 (GtkBuilder *builder, const char *prefix, NMSettingVpn *s_vpn)
 	str = gtk_editable_get_text (GTK_EDITABLE (widget));
 	if (str && *str) {
 		rp_ptr = realpath (str, rp_buf);
-		if (rp_ptr && strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
-		                       strlen (NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) == 0)
+		if (rp_ptr &&
+		    strlen(rp_ptr) != 0 &&
+		    strncmp (rp_ptr, NM_OPENVPN_PKCS11_PROVIDERS_PREFIX,
+		             strlen(NM_OPENVPN_PKCS11_PROVIDERS_PREFIX)) == 0)
 			nm_setting_vpn_add_data_item (s_vpn, NM_OPENVPN_KEY_PKCS11_PROVIDERS, rp_ptr);
 	}
 
